@@ -7,7 +7,7 @@ load_dotenv()
 
 class Config:
     # OpenAI API Key
-    OPENAI_API_KEY = ""
+    OPENAI_API_KEY = "xxxxxx"
 
     BASE_URL = ""
 
@@ -49,6 +49,24 @@ class Config:
     UPLOAD_FOLDER = "./data/uploads"
     MAX_UPLOAD_SIZE_MB = 200
     PDF_BATCH_SIZE = 5  # Process 5 pages at a time
+
+        # PowerPoint extraction settings
+    EXTRACT_SLIDE_NOTES = True  # Include slide notes in extraction
+    EXTRACT_PRESENTATION_METADATA = True  # Include presentation properties
+    POWERPOINT_BATCH_SIZE = 5  # Slides per batch for large presentations
+
+
+    # Image OCR settings
+    IMAGE_OCR_ENHANCEMENT_LEVEL = "standard"  # light, standard, aggressive
+    IMAGE_OCR_LANGUAGES = "eng"  # Tesseract language codes
+    IMAGE_MIN_CONFIDENCE = 30  # Minimum OCR confidence threshold
+    IMAGE_BATCH_SIZE = 5  # Images to process in batch
+    
+    # OCR preprocessing settings
+    ENABLE_IMAGE_PREPROCESSING = True
+    OCR_DPI_THRESHOLD = 300  # Minimum DPI for good OCR
+    ENABLE_DESKEW = True  # Auto-correct skewed images
+    ENABLE_NOISE_REMOVAL = True
 
     # Create directories
     @classmethod
