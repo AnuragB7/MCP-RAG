@@ -14,6 +14,8 @@ MCP-RAG system built with the Model Context Protocol (MCP) that handles large fi
 - **DOCX**: Paragraph and table extraction with formatting preservation  
 - **Excel**: Sheet-aware processing with column context (.xlsx/.xls)
 - **CSV**: Smart row batching with header preservation
+- **PPTX**: Support for PPTX
+- **IMAGE**: Suppport for jpeg , png , webp , gif etc and OCR
 
 ### 🚀 **Large File Processing**
 - **Adaptive chunking**: Different strategies based on file size
