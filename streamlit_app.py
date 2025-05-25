@@ -73,7 +73,7 @@ class AsyncRunner:
     """Helper class to run async functions in Streamlit safely"""
     
     @staticmethod
-    def run_in_thread(async_func, *args, **kwargs):
+    def run_in_thread(async_func, *args, timeout_minutes=15, **kwargs):  # Increased from 5 to 15
         """Run async function in a separate thread with proper event loop"""
         result_queue = queue.Queue()
         error_queue = queue.Queue()
@@ -101,7 +101,7 @@ class AsyncRunner:
         # Start thread
         thread = threading.Thread(target=run_async)
         thread.start()
-        thread.join(timeout=300)  # 5 minute timeout
+        thread.join(timeout=timeout_minutes * 60)  # Convert to seconds
         
         # Check results
         if not error_queue.empty():
@@ -111,9 +111,22 @@ class AsyncRunner:
             return result_queue.get()
         
         if thread.is_alive():
-            raise TimeoutError("Operation timed out after 5 minutes")
+            raise TimeoutError(f"Operation timed out after {timeout_minutes} minutes")
         
         raise RuntimeError("Async operation failed without error")
+
+def check_documents_in_store(agent):
+    """Check if documents exist in the RAG store"""
+    try:
+        result = AsyncRunner.run_in_thread(agent.get_document_summary, timeout_minutes=1)
+        if result and 'messages' in result:
+            # Parse the summary to check document count
+            summary_text = result['messages'][-1].content
+            return "total_documents" in summary_text.lower() and "0" not in summary_text
+        return False
+    except Exception as e:
+        logger.error(f"Error checking document store: {e}")
+        return False
 
 def initialize_agent():
     """Initialize the RAG agent with error handling"""
@@ -183,7 +196,7 @@ def process_documents_safely(agent, file_paths):
     except Exception as e:
         logger.error(f"Document processing error: {e}")
         logger.error(traceback.format_exc())
-        raise
+        # raise
 
 def query_documents_safely(agent, query):
     """Query documents with error handling"""
@@ -273,9 +286,10 @@ def main():
         # File uploader
         uploaded_files = st.file_uploader(
             "Choose files to upload",
-            type=['pdf', 'docx', 'xlsx', 'xls', 'csv'],
+            type=['pdf', 'docx', 'xlsx', 'xls', 'csv', 'pptx', 'ppt', 'pptm', 'potx', 
+                'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'gif', 'webp'],
             accept_multiple_files=True,
-            help=f"Supported formats: PDF, DOCX, Excel, CSV. Max size: {Config.MAX_FILE_SIZE_MB}MB per file"
+            help=f"Supported formats: PDF, DOCX, Excel, CSV, PowerPoint, Images (JPG, PNG, etc.). Max size: {Config.MAX_FILE_SIZE_MB}MB per file"
         )
         
         if uploaded_files:
@@ -314,6 +328,7 @@ def main():
                 st.metric("Large Files", large_files)
             
             # Process button
+            # Process button
             if st.button("🚀 Process Documents", type="primary"):
                 try:
                     # Save files
@@ -324,28 +339,42 @@ def main():
                         st.error("❌ No files were successfully saved")
                         return
                     
-                    # Process documents
-                    with st.spinner("Processing documents with RAG... This may take a while for large files."):
+                    # Process documents with better progress tracking
+                    progress_container = st.container()
+                    with progress_container:
+                        st.info("🔄 **Large files detected - processing may take 10-15 minutes**")
                         progress_bar = st.progress(0)
                         status_text = st.empty()
+                        
+                        # Show estimated time for large files
+                        total_size = sum(len(f.getbuffer()) for f in uploaded_files) / (1024 * 1024)
+                        if total_size > 30:  # If total size > 30MB
+                            estimated_minutes = max(5, int(total_size / 10))  # Rough estimate
+                            st.warning(f"⏱️ Estimated processing time: {estimated_minutes} minutes for {total_size:.1f}MB")
                         
                         try:
                             # Update progress
                             for i, file_path in enumerate(file_paths):
-                                progress_bar.progress((i + 1) / len(file_paths) * 0.5)  # First half for preparation
+                                progress_bar.progress((i + 1) / len(file_paths) * 0.3)
                                 status_text.text(f"Preparing {os.path.basename(file_path)}...")
                                 time.sleep(0.1)
                             
-                            # Process all files
-                            status_text.text("Processing documents with RAG...")
-                            progress_bar.progress(0.7)
+                            # Process all files with longer timeout
+                            status_text.text("🔄 Processing documents with RAG (this may take 10-15 minutes for large files)...")
+                            progress_bar.progress(0.5)
                             
-                            result = process_documents_safely(agent, file_paths)
+                            # Use longer timeout for large files
+                            timeout_mins = 20 if total_size > 30 else 10
+                            result = AsyncRunner.run_in_thread(
+                                agent.upload_and_index_documents, 
+                                file_paths, 
+                                timeout_minutes=timeout_mins
+                            )
                             
                             progress_bar.progress(1.0)
                             status_text.text("✅ Processing complete!")
                             
-                            # Display results
+                            # Display results and update session state
                             if result:
                                 st.markdown('<div class="success-box">✅ Documents processed successfully!</div>', unsafe_allow_html=True)
                                 
@@ -358,36 +387,62 @@ def main():
                                 
                                 # Update session state
                                 st.session_state.uploaded_files.extend([os.path.basename(p) for p in file_paths])
+                                
+                                # Force a rerun to update the UI
+                                st.rerun()
                             
-                        except Exception as e:
+                        except TimeoutError as e:
+                            progress_bar.progress(0.5)
+                            status_text.text("⏱️ Processing is taking longer than expected...")
+                            st.warning("""
+                            🔄 **Processing is taking longer than expected but may still be running in the background.**
+                            
+                            **Options:**
+                            1. Wait a few more minutes and try querying documents
+                            2. Check the terminal logs for progress
+                            3. Restart the application if needed
+                            
+                            Large PDFs with OCR can take 15-20 minutes to process.
+                            """)
+                            
+                except Exception as e:
                             progress_bar.progress(0)
                             status_text.text("❌ Processing failed")
                             st.error(f"❌ Error processing documents: {e}")
                             
-                            # Show detailed error for debugging
                             with st.expander("🔍 Error Details"):
                                 st.code(traceback.format_exc())
-                            
-                            logger.error(f"Document processing error: {e}")
-                
-                except Exception as e:
-                    st.error(f"❌ Unexpected error: {e}")
-                    logger.error(f"Unexpected error: {e}")
     
     with tab2:
         st.header("🔍 Query Documents")
         
-        if not st.session_state.uploaded_files:
+        # Check both session state and actual document store
+        has_session_files = bool(st.session_state.uploaded_files)
+        
+        # Check if documents exist in the store (even if session state is empty)
+        if not has_session_files:
+            with st.spinner("Checking for existing documents..."):
+                has_store_documents = check_documents_in_store(agent)
+        else:
+            has_store_documents = True
+        
+        if not has_session_files and not has_store_documents:
             st.markdown('<div class="info-box">ℹ️ Please upload documents first in the Upload tab.</div>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="success-box">📚 Ready to query {len(st.session_state.uploaded_files)} documents</div>', unsafe_allow_html=True)
+            if has_session_files:
+                st.markdown(f'<div class="success-box">📚 Ready to query {len(st.session_state.uploaded_files)} documents</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="success-box">📚 Documents found in store - ready to query!</div>', unsafe_allow_html=True)
+                st.info("💡 Note: Documents were processed but session state was lost. Functionality is still available.")
             
-            # Query input
+            # Rest of your query logic...
             query = st.text_area(
                 "Enter your question:",
                 placeholder="e.g., What are the main trends in the sales data? How do customer feedback correlate with financial performance?",
                 height=100
             )
+        
+        
             
             # Query examples
             with st.expander("💡 Example Questions"):
@@ -499,10 +554,11 @@ def main():
     # Footer
     st.markdown("---")
     st.markdown(
-        "🤖 **RAG Large File Document Processor** | "
-        "Powered by MCP, LangChain, and OpenAI | "
+        "🤖 **MCP-RAG ** | "
+        "Powered by MCP, LangChain | "
         f"Max file size: {Config.MAX_FILE_SIZE_MB}MB | "
-        f"Supports: PDF, DOCX, Excel, CSV"
+        f"Supports: PDF, DOCX, Excel, CSV, PowerPoint, Images"
+
     )
 
 if __name__ == "__main__":
