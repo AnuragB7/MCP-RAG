@@ -318,10 +318,60 @@ class RAGDocumentStore:
             logger.error(f"Semantic search failed: {e}")
             return []
     
+    async def reconstruct_document_metadata(self):
+        """Reconstruct document metadata from ChromaDB"""
+        try:
+            # Get all documents from ChromaDB
+            results = self.collection.get(include=["metadatas"])
+            
+            if not results["metadatas"]:
+                logger.info("No chunks found in ChromaDB")
+                return
+            
+            # Reconstruct metadata by grouping chunks by document
+            reconstructed_docs = {}
+            
+            for metadata in results["metadatas"]:
+                doc_id = metadata.get("doc_id")
+                if doc_id and doc_id not in reconstructed_docs:
+                    reconstructed_docs[doc_id] = {
+                        "filename": metadata.get("filename", "unknown"),
+                        "file_type": metadata.get("file_type", "unknown"),
+                        "chunk_count": 0,
+                        "total_chars": 0,
+                        "metadata": {
+                            "file_size_bytes": metadata.get("file_size_bytes", 0),
+                            "file_size_mb": metadata.get("file_size_mb", 0),
+                            "file_extension": metadata.get("file_extension", ""),
+                            "processing_strategy": metadata.get("processing_strategy", "unknown")
+                        },
+                        "upload_time": metadata.get("upload_time", "unknown")
+                    }
+                
+                if doc_id:
+                    reconstructed_docs[doc_id]["chunk_count"] += 1
+                    reconstructed_docs[doc_id]["total_chars"] += metadata.get("chunk_size", 0)
+            
+            # Update documents_metadata
+            self.documents_metadata = reconstructed_docs
+            
+            logger.info(f"Reconstructed metadata for {len(reconstructed_docs)} documents")
+            return reconstructed_docs
+            
+        except Exception as e:
+            logger.error(f"Failed to reconstruct document metadata: {e}")
+            return {}
+
     async def get_document_summary(self) -> Dict[str, Any]:
-        """Get summary of all documents"""
+        """Get summary of all documents with auto-reconstruction"""
         try:
             total_chunks = self.collection.count()
+            
+            # If we have chunks but no metadata, try to reconstruct
+            if total_chunks > 0 and len(self.documents_metadata) == 0:
+                logger.info("Found chunks but no metadata, attempting reconstruction...")
+                await self.reconstruct_document_metadata()
+            
             return {
                 "total_documents": len(self.documents_metadata),
                 "total_chunks": total_chunks,
