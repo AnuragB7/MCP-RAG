@@ -427,6 +427,90 @@ async def analyze_document_collection() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Document collection analysis failed: {e}")
         return {"error": str(e)}
+    
+@mcp.tool()
+async def process_images_with_ocr(image_paths: List[str], enhancement_level: str = "standard") -> Dict[str, Any]:
+    """
+    Process multiple images with OCR using specified enhancement level.
+    
+    Args:
+        image_paths: List of image file paths
+        enhancement_level: OCR enhancement level (light, standard, aggressive)
+    
+    Returns:
+        OCR processing results
+    """
+    try:
+        logger.info(f"Processing {len(image_paths)} images with OCR (level: {enhancement_level})")
+        
+        results = {
+            "processed_images": [],
+            "failed_images": [],
+            "batch_summary": {
+                "total_images": len(image_paths),
+                "successful_extractions": 0,
+                "total_characters": 0,
+                "processing_time_ms": 0
+            }
+        }
+        
+        import time
+        start_time = time.time()
+        
+        for image_path in image_paths:
+            try:
+                if not os.path.exists(image_path):
+                    results["failed_images"].append({
+                        "image_path": image_path,
+                        "error": "File not found"
+                    })
+                    continue
+                
+                # Check file size
+                file_info = await ContentExtractor.get_file_info(image_path)
+                if file_info.get("file_size_mb", 0) > Config.MAX_FILE_SIZE_MB:
+                    results["failed_images"].append({
+                        "image_path": image_path,
+                        "error": f"File too large. Maximum size: {Config.MAX_FILE_SIZE_MB}MB"
+                    })
+                    continue
+                
+                # Extract content from image
+                content = await ContentExtractor.extract_image_content(image_path)
+                
+                if content and not content.startswith("Error") and not content.startswith("No text"):
+                    results["processed_images"].append({
+                        "image_path": image_path,
+                        "filename": os.path.basename(image_path),
+                        "content_length": len(content),
+                        "file_size_mb": file_info["file_size_mb"],
+                        "status": "success",
+                        "content_preview": content[:200] + "..." if len(content) > 200 else content
+                    })
+                    
+                    results["batch_summary"]["successful_extractions"] += 1
+                    results["batch_summary"]["total_characters"] += len(content)
+                else:
+                    results["failed_images"].append({
+                        "image_path": image_path,
+                        "error": content or "No text extracted"
+                    })
+            
+            except Exception as e:
+                logger.error(f"Error processing image {image_path}: {e}")
+                results["failed_images"].append({
+                    "image_path": image_path,
+                    "error": str(e)
+                })
+        
+        results["batch_summary"]["processing_time_ms"] = int((time.time() - start_time) * 1000)
+        
+        logger.info(f"Image processing complete: {results['batch_summary']['successful_extractions']}/{len(image_paths)} successful")
+        return results
+        
+    except Exception as e:
+        logger.error(f"Image batch processing failed: {e}")
+        return {"error": str(e)}
 
 @mcp.tool()
 async def clear_document_store() -> Dict[str, Any]:
