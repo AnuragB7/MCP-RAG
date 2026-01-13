@@ -3,7 +3,7 @@ import chromadb
 from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import uuid
@@ -313,11 +313,151 @@ class RAGDocumentStore:
             
             logger.info(f"Found {len(formatted_results)} semantic matches")
             return formatted_results
-            
+
         except Exception as e:
             logger.error(f"Semantic search failed: {e}")
             return []
-    
+
+    def _build_keyword_filter(self, keywords: Optional[List[str]], match_all: bool = True) -> Optional[Dict]:
+        """Build ChromaDB where_document filter for single or multiple keywords.
+
+        Args:
+            keywords: List of keywords to match
+            match_all: If True, all keywords must be present (AND). If False, any keyword matches (OR).
+
+        Returns:
+            ChromaDB where_document filter dict, or None if no keywords
+        """
+        if not keywords:
+            return None
+
+        if len(keywords) == 1:
+            return {"$contains": keywords[0]}
+
+        # Multiple keywords - use $and or $or
+        operator = "$and" if match_all else "$or"
+        return {operator: [{"$contains": kw} for kw in keywords]}
+
+    async def keyword_search(self, keywords: Any, n_results: int = 10,
+                            doc_ids: Optional[List[str]] = None,
+                            match_all: bool = True) -> List[Dict[str, Any]]:
+        """Perform exact keyword/substring search using ChromaDB's $contains filter.
+
+        Args:
+            keywords: Single keyword string or list of keywords to search for
+            n_results: Maximum number of results to return
+            doc_ids: Optional list of document IDs to restrict search to
+            match_all: If True (default), all keywords must be present. If False, any keyword matches.
+        """
+        try:
+            # Normalize keywords to list
+            if isinstance(keywords, str):
+                keyword_list = [keywords]
+            else:
+                keyword_list = list(keywords)
+
+            logger.info(f"Performing keyword search: {keyword_list} (match_all={match_all}, n_results={n_results})")
+
+            # Prepare filters
+            where_filter = {}
+            if doc_ids:
+                where_filter["doc_id"] = {"$in": doc_ids}
+
+            # Build keyword filter
+            where_document = self._build_keyword_filter(keyword_list, match_all)
+
+            # Use ChromaDB's where_document with $contains for keyword matching
+            results = self.collection.get(
+                where=where_filter if where_filter else None,
+                where_document=where_document,
+                include=["documents", "metadatas"]
+            )
+
+            # Format results
+            formatted_results = []
+            if results["documents"]:
+                for i in range(min(len(results["documents"]), n_results)):
+                    formatted_results.append({
+                        "content": results["documents"][i],
+                        "metadata": results["metadatas"][i] if results["metadatas"] else {},
+                        "match_type": "keyword",
+                        "keywords": keyword_list,
+                        "match_all": match_all,
+                        "chunk_id": results["ids"][i] if "ids" in results else f"chunk_{i}"
+                    })
+
+            logger.info(f"Found {len(formatted_results)} keyword matches (limited to {n_results})")
+            return formatted_results
+
+        except Exception as e:
+            logger.error(f"Keyword search failed: {e}")
+            return []
+
+    async def hybrid_search(self, query: str, keywords: Optional[Any] = None,
+                           n_results: int = 10, doc_ids: Optional[List[str]] = None,
+                           match_all: bool = True) -> List[Dict[str, Any]]:
+        """Perform hybrid search: semantic search filtered by keyword match.
+
+        Args:
+            query: Semantic search query
+            keywords: Optional single keyword string or list of keywords to filter by
+            n_results: Maximum number of results to return
+            doc_ids: Optional list of document IDs to restrict search to
+            match_all: If True (default), all keywords must be present. If False, any keyword matches.
+        """
+        try:
+            # Normalize keywords to list
+            keyword_list = None
+            if keywords:
+                if isinstance(keywords, str):
+                    keyword_list = [keywords]
+                else:
+                    keyword_list = list(keywords)
+
+            logger.info(f"Performing hybrid search: query='{query}', keywords={keyword_list} (match_all={match_all}, n_results={n_results})")
+
+            # Create query embedding
+            query_embedding = await self.embed_function([query]) if asyncio.iscoroutinefunction(self.embed_function) else self.embed_function([query])
+
+            # Prepare filters
+            where_filter = {}
+            if doc_ids:
+                where_filter["doc_id"] = {"$in": doc_ids}
+
+            # Build keyword filter
+            where_document = self._build_keyword_filter(keyword_list, match_all)
+
+            # Search with both semantic and keyword filtering
+            results = self.collection.query(
+                query_embeddings=query_embedding,
+                n_results=min(n_results, self.collection.count()),
+                where=where_filter if where_filter else None,
+                where_document=where_document,
+                include=["documents", "metadatas", "distances"]
+            )
+
+            # Format results
+            formatted_results = []
+            if results["documents"] and results["documents"][0]:
+                for i in range(len(results["documents"][0])):
+                    similarity_score = 1 - results["distances"][0][i] if results["distances"] else 0
+                    formatted_results.append({
+                        "content": results["documents"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                        "similarity_score": similarity_score,
+                        "match_type": "hybrid",
+                        "keywords_filter": keyword_list,
+                        "match_all": match_all,
+                        "chunk_id": results["ids"][0][i] if "ids" in results else f"chunk_{i}"
+                    })
+
+            logger.info(f"Found {len(formatted_results)} hybrid matches")
+            return formatted_results
+
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            return []
+
     async def reconstruct_document_metadata(self):
         """Reconstruct document metadata from ChromaDB"""
         try:

@@ -317,6 +317,85 @@ async def semantic_search_documents(query: str, n_results: int = 10,
         return {"error": f"Semantic search failed: {str(e)}"}
 
 @mcp.tool()
+async def keyword_search_documents(keywords: List[str], n_results: int = 10,
+                                   document_ids: Optional[List[str]] = None,
+                                   match_all: bool = True) -> Dict[str, Any]:
+    """
+    Perform exact keyword/substring search across uploaded documents.
+
+    Use this when you need to find exact matches rather than semantic similarity.
+    Examples: part numbers (ADP5360), register names (VTRK_DEAD), specific terms.
+
+    Args:
+        keywords: List of keywords to search for. All must be present if match_all=True.
+        n_results: Maximum number of results to return (default 10)
+        document_ids: Optional list of specific document IDs to search within
+        match_all: If True (default), chunks must contain ALL keywords. If False, ANY keyword matches.
+
+    Returns:
+        Document chunks containing the specified keyword(s)
+    """
+    try:
+        results = await rag_store.keyword_search(keywords, n_results, document_ids, match_all)
+
+        return {
+            "keywords": keywords,
+            "match_all": match_all,
+            "total_results": len(results),
+            "results": results,
+            "search_type": "keyword_match"
+        }
+    except Exception as e:
+        logger.error(f"Keyword search failed: {e}")
+        return {"error": f"Keyword search failed: {str(e)}"}
+
+
+@mcp.tool()
+async def hybrid_search_documents(query: str, keywords: Optional[List[str]] = None,
+                                  n_results: int = 10,
+                                  document_ids: Optional[List[str]] = None,
+                                  match_all: bool = True) -> Dict[str, Any]:
+    """
+    RECOMMENDED: Perform hybrid search combining semantic similarity with keyword filtering.
+
+    This is the most powerful search mode - it finds semantically relevant content
+    that also contains specific keywords. Use this as your default RAG search.
+
+    USAGE GUIDANCE FOR AI ASSISTANTS:
+    - PREFER this over semantic_search_documents for most queries
+    - Extract technical terms, part numbers, register names from user queries as keywords
+    - Example: User asks "What are the voltage thresholds for the ADP5360 charger?"
+      -> query="voltage thresholds charger", keywords=["ADP5360"]
+    - If no obvious keywords exist, omit keywords parameter (falls back to semantic search)
+
+    Args:
+        query: Semantic search query describing the concept you're looking for
+        keywords: Optional list of exact keywords that must appear in results.
+                 Extract these from technical terms, part numbers, identifiers in the query.
+        n_results: Maximum number of results to return (default 10)
+        document_ids: Optional list of specific document IDs to search within
+        match_all: If True (default), chunks must contain ALL keywords. If False, ANY keyword matches.
+
+    Returns:
+        Semantically similar content chunks that also match keyword filter(s)
+    """
+    try:
+        results = await rag_store.hybrid_search(query, keywords, n_results, document_ids, match_all)
+
+        return {
+            "query": query,
+            "keywords_filter": keywords,
+            "match_all": match_all,
+            "total_results": len(results),
+            "results": results,
+            "search_type": "hybrid" if keywords else "semantic_similarity"
+        }
+    except Exception as e:
+        logger.error(f"Hybrid search failed: {e}")
+        return {"error": f"Hybrid search failed: {str(e)}"}
+
+
+@mcp.tool()
 async def retrieve_context_for_query(query: str, max_context_length: int = 4000) -> Dict[str, Any]:
     """
     Retrieve relevant context for a query using RAG (optimized for LLM consumption).
