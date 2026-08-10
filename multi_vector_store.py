@@ -158,7 +158,7 @@ class MultiVectorStore:
     async def _openai_embed(self, texts: List[str]) -> List[List[float]]:
         """Create embeddings using OpenAI with batch size limits"""
         try:
-            max_batch_size = self.config.T_SYSTEMS_MAX_BATCH_SIZE
+            max_batch_size = self.config.MAX_BATCH_SIZE
             all_embeddings = []
             
             logger.info(f"Creating embeddings for {len(texts)} texts in batches of {max_batch_size}")
