@@ -74,9 +74,9 @@ class RAGDocumentStore:
             raise
     
     async def _openai_embed(self, texts: List[str]) -> List[List[float]]:
-        """Create embeddings using OpenAI with T-Systems batch size limits"""
+        """Create embeddings using OpenAI with batch size limits"""
         try:
-            # T-Systems has a batch size limit of 128
+            # batch size limit of 128
             max_batch_size = 100  # Use 100 to be safe
             all_embeddings = []
             
