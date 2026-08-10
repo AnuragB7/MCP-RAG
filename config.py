@@ -35,7 +35,7 @@ class Config:
     EMBEDDING_MODEL = "text-embedding-bge-m3"
     USE_OPENAI_EMBEDDINGS = bool(OPENAI_API_KEY)  # Use OpenAI if key available
     VECTOR_DB_PATH = "./data/chroma_db"
-    T_SYSTEMS_MAX_BATCH_SIZE = 128
+    MAX_BATCH_SIZE = 128
 
     # Text chunking settings
     CHUNK_SIZE = 500
